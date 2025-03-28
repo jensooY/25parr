@@ -34,7 +34,7 @@ void original(int** matrix, int* a, int* sum, int n) {
     }
 }
 
-// cache优化算法
+// cache 优化算法
 void cache(int** matrix, int* a, int* sum, int n) {
     for (int j = 0; j < n; j++) {
         for (int i = 0; i < n; i++)
@@ -42,7 +42,7 @@ void cache(int** matrix, int* a, int* sum, int n) {
     }
 }
 
-// 循环展开算法
+// 循环展开算法——基于cache算法
 void unroll(int** matrix, int* a, int* sum, int n) {
     for (int j = 0; j < n; j++) {
         for (int i = 0; i < n; i += 2) {
@@ -53,23 +53,20 @@ void unroll(int** matrix, int* a, int* sum, int n) {
         }
     }
 }
-// 循环展开算法-平凡基础上
+
+// 循环展开算法——基于平凡算法
 void unroll_ord(int** matrix, int* a, int* sum, int n) {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j += 2) {
-            sum[i] += matrix[j][i] * a[i];
+            sum[i] += matrix[j][i] * a[j];
             if (j + 1 < n) {
-                sum[i] += matrix[j + 1][i] * a[i];
+                sum[i] += matrix[j + 1][i] * a[j];
             }
         }
     }
 }
 
 void test(void (*algor)(int**, int*, int*, int), int n, int& counter, double& seconds) {
-    LARGE_INTEGER frequency, start, finish;
-    QueryPerformanceFrequency(&frequency);
-    QueryPerformanceCounter(&start);
-
     int** matrix;
     int* a;
     initializeMatrix(matrix, a, n);
@@ -77,26 +74,29 @@ void test(void (*algor)(int**, int*, int*, int), int n, int& counter, double& se
     for (int i = 0; i < n; i++)
         sum[i] = 0;
 
+    LARGE_INTEGER frequency, start, finish;
+    QueryPerformanceFrequency(&frequency);
+
     counter = 0;
+    // 开始计时
+    QueryPerformanceCounter(&start);
     while (true) {
         counter++;
         algor(matrix, a, sum, n);
         QueryPerformanceCounter(&finish);
         seconds = static_cast<double>(finish.QuadPart - start.QuadPart) / frequency.QuadPart;
-        if (counter >= 101)
+        if (seconds >= 3.0)
             break;
     }
-
     cleanup(matrix, a, sum, n);
 }
 
 int main() {
-    int step = 10;//通过修改step及循环条件，测试cache hit\miss
-    for (int n = 0; n <=10000; n += step) {
+    int step = 10; // 通过修改 step 及循环条件，测试 cache hit\miss
+    for (int n = 0; n <= 10000; n += step) {
         int counter;
         double seconds;
 
-      
         test(original, n, counter, seconds);
         cout << left
             << setw(10) << "original:"
@@ -115,23 +115,23 @@ int main() {
             << setw(10) << (seconds / counter)
             << endl;
 
-        test(unroll, n, counter, seconds);
-        cout << left  
-           << setw(10) << "unroll:"
-           << setw(10) << n
-           << setw(10) << counter
-           << setw(10) << seconds
-           << setw(10) << (seconds / counter)
-           << endl;
-
-        //test(unroll_ord, n, counter, seconds);
-        //cout << left
-        //    << setw(10) << "unroll_ord:"
-        //    << setw(10) << n
-        //    << setw(10) << counter
-        //    << setw(10) << seconds
-        //    << setw(10) << (seconds / counter)
-        //    << endl;
+         test(unroll, n, counter, seconds);
+         cout << left  
+              << setw(10) << "unroll:"
+              << setw(10) << n
+              << setw(10) << counter
+              << setw(10) << seconds
+              << setw(10) << (seconds / counter)
+              << endl;
+        
+         test(unroll_ord, n, counter, seconds);
+         cout << left
+              << setw(10) << "unroll_ord:"
+              << setw(10) << n
+              << setw(10) << counter
+              << setw(10) << seconds
+              << setw(10) << (seconds / counter)
+              << endl;
 
         if (n == 100)
             step = 100;
