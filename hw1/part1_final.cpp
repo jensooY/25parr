@@ -4,7 +4,7 @@
 
 using namespace std;
 
-// ³õÊ¼»¯¾ØÕóºÍÏòÁ¿
+// åˆå§‹åŒ–çŸ©é˜µå’Œå‘é‡
 void initializeMatrix(int**& matrix, int*& a, int n) {
     matrix = new int* [n];
     for (int i = 0; i < n; i++)
@@ -17,7 +17,7 @@ void initializeMatrix(int**& matrix, int*& a, int n) {
     }
 }
 
-// ÊÍ·Å¾ØÕóºÍÏòÁ¿µÄÄÚ´æ
+// é‡Šæ”¾çŸ©é˜µå’Œå‘é‡çš„å†…å­˜
 void cleanup(int** matrix, int* a, int* sum, int n) {
     for (int i = 0; i < n; i++)
         delete[] matrix[i];
@@ -26,7 +26,7 @@ void cleanup(int** matrix, int* a, int* sum, int n) {
     delete[] sum;
 }
 
-// Æ½·²Ëã·¨
+// å¹³å‡¡ç®—æ³•
 void original(int** matrix, int* a, int* sum, int n) {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++)
@@ -34,7 +34,7 @@ void original(int** matrix, int* a, int* sum, int n) {
     }
 }
 
-// cacheÓÅ»¯Ëã·¨
+// cacheä¼˜åŒ–ç®—æ³•
 void cache(int** matrix, int* a, int* sum, int n) {
     for (int j = 0; j < n; j++) {
         for (int i = 0; i < n; i++)
@@ -42,7 +42,7 @@ void cache(int** matrix, int* a, int* sum, int n) {
     }
 }
 
-// Ñ­»·Õ¹¿ªËã·¨
+// å¾ªç¯å±•å¼€ç®—æ³•
 void unroll(int** matrix, int* a, int* sum, int n) {
     for (int j = 0; j < n; j++) {
         for (int i = 0; i < n; i += 2) {
@@ -53,7 +53,7 @@ void unroll(int** matrix, int* a, int* sum, int n) {
         }
     }
 }
-// Ñ­»·Õ¹¿ªËã·¨-Æ½·²»ù´¡ÉÏ
+// å¾ªç¯å±•å¼€ç®—æ³•-å¹³å‡¡åŸºç¡€ä¸Š
 void unroll_ord(int** matrix, int* a, int* sum, int n) {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j += 2) {
@@ -91,7 +91,7 @@ void test(void (*algor)(int**, int*, int*, int), int n, int& counter, double& se
 }
 
 int main() {
-    int step = 400;//Í¨¹ıĞŞ¸Ästep¼°Ñ­»·Ìõ¼ş£¬²âÊÔcache hit\miss
+    int step = 400;//é€šè¿‡ä¿®æ”¹stepåŠå¾ªç¯æ¡ä»¶ï¼Œæµ‹è¯•cache hit\miss
     for (int n = 400; n <=441; n += step) {
         int counter;
         double seconds;
