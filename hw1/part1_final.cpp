@@ -87,6 +87,9 @@ void test(void (*algor)(int**, int*, int*, int), int n, int& counter, double& se
         seconds = static_cast<double>(finish.QuadPart - start.QuadPart) / frequency.QuadPart;
         if (seconds >= 3.0)
             break;
+        //VT时用
+        // if (counter >= 10)
+        //     break;
     }
     cleanup(matrix, a, sum, n);
 }
