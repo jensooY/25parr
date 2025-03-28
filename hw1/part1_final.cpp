@@ -30,7 +30,7 @@ void cleanup(int** matrix, int* a, int* sum, int n) {
 void original(int** matrix, int* a, int* sum, int n) {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++)
-            sum[i] += matrix[j][i] * a[i];
+            sum[i] += matrix[j][i] * a[j];
     }
 }
 
