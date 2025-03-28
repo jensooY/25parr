@@ -129,7 +129,6 @@ int main() {
     int loops = 10;
     cout << "规模      方法                    耗时" << endl;
     cout << "------------------------------------------------" << endl;
-    // 示例：n 从 67108864 开始，按需要调整规模
     for (int n = 2; n <= 67108864*4; n *= 2) {
         test("平凡算法", ordinary_core, n, loops);
         //test("多路链式", chain_core, n, loops);
