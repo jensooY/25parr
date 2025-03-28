@@ -91,8 +91,8 @@ void test(void (*algor)(int**, int*, int*, int), int n, int& counter, double& se
 }
 
 int main() {
-    int step = 400;//通过修改step及循环条件，测试cache hit\miss
-    for (int n = 400; n <=441; n += step) {
+    int step = 10;//通过修改step及循环条件，测试cache hit\miss
+    for (int n = 0; n <=10000; n += step) {
         int counter;
         double seconds;
 
@@ -115,14 +115,14 @@ int main() {
             << setw(10) << (seconds / counter)
             << endl;
 
-        //test(unroll, n, counter, seconds);
-        //cout << left  
-        //    << setw(10) << "unroll:"
-        //    << setw(10) << n
-        //    << setw(10) << counter
-        //    << setw(10) << seconds
-        //    << setw(10) << (seconds / counter)
-        //    << endl;
+        test(unroll, n, counter, seconds);
+        cout << left  
+           << setw(10) << "unroll:"
+           << setw(10) << n
+           << setw(10) << counter
+           << setw(10) << seconds
+           << setw(10) << (seconds / counter)
+           << endl;
 
         //test(unroll_ord, n, counter, seconds);
         //cout << left
