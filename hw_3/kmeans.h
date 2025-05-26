@@ -1,64 +1,67 @@
 #ifndef KMEANS_H // 包含守卫，防止重复包含
 #define KMEANS_H
 
-#include <vector>    // 标准库：动态数组
-#include <cstdint>   // 标准库：固定宽度整数类型，如 uint32_t
-#include <limits>    // 标准库：数值极限，如 std::numeric_limits
-#include "simd_distance.h" // 你的SIMD内积距离计算头文件
+#include <vector>    
+#include <cstdint>   
+#include <limits>    /
+#include "simd_distance.h" /
 #include <algorithm>
-#include <cmath> 
-#include <random> 
+#include <cmath>     // 标准库：数学函数
+#include <random>    // 标准库：随机数
+#include <iostream>  // 标准库：输入输出
+#include <fstream>   // 【新增】标准库：文件流，用于写入文件
+#include <string>    // 【新增】标准库：字符串，用于文件名
+
+// 使用std命名空间
 using namespace std;
 
-// KMeans聚类结果的结构体
+// KMeans聚类结果的结构体 (保持不变)
 struct KMeansResult {
-    vector<float> centroids;            // 质心数据，扁平化存储：簇数量 * 维度
-    vector<vector<uint32_t>> inverted_lists; // 倒排列表，inverted_lists[i] 存储属于簇i的数据点ID
-    size_t num_clusters;                // 簇的数量
-    size_t dim;                         // 数据维度
+    vector<float> centroids;
+    vector<vector<uint32_t>> inverted_lists;
+    size_t num_clusters;
+    size_t dim;
 };
 
 
-// 辅助函数：随机初始化质心（例如使用Forgy方法）
-// const float* base_data: 原始数据
-// size_t num_points: 数据点数量
-// size_t dim: 数据维度
-// size_t num_clusters: 簇数量
-// vector<float>& centroids: 用于存储初始化后的质心
-void initialize_centroids_randomly
+// 辅助函数：随机初始化质心 (保持不变)
+inline void initialize_centroids_randomly // 标记为inline，因为在头文件中定义
     (const float* base_data, size_t num_points, size_t dim,
-        size_t num_clusters, vector<float>& centroids) 
+        size_t num_clusters, vector<float>& centroids)
 {
-    centroids.resize(num_clusters * dim); //调整质心容器大小
-    vector<uint32_t> chosen_indices;      // 已选择的初始质心在原始数据中的索引
-    chosen_indices.reserve(num_clusters); // 预分配空间
+    centroids.resize(num_clusters * dim);
+    vector<uint32_t> chosen_indices;
+    chosen_indices.reserve(num_clusters);
 
-    // 使用 Mersenne Twister 伪随机数生成器
     std::mt19937 rng(std::random_device{}());
-    // 生成 [0, num_points - 1] 范围内的均匀分布整数
     std::uniform_int_distribution<size_t> dist(0, num_points - 1);
 
-    for (size_t i = 0; i < num_clusters; ++i) 
+    for (size_t i = 0; i < num_clusters; ++i)
     {
         size_t rand_idx;
         bool unique = false;
-        // 确保选取的初始质心是唯一的,因为我们不希望同一个数据点被多次选为不同的初始质心
-        while(!unique)
+        int attempts = 0; // 防止在num_clusters接近num_points时死循环
+        while(!unique && attempts < num_points * 2) // 增加尝试次数上限
         {
-            rand_idx = dist(rng); // 随机选取一个索引
+            attempts++;
+            rand_idx = dist(rng);
             unique = true;
             for(uint32_t chosen_idx : chosen_indices)
             {
                 if(chosen_idx == rand_idx)
-                { // 如果已选过
+                {
                     unique = false;
                     break;
                 }
             }
         }
-        chosen_indices.push_back(rand_idx); // 记录已选索引
-        // 将选中的数据点复制为初始质心
-        for (size_t d = 0; d < dim; ++d) 
+        // 如果在多次尝试后仍未找到唯一的，并且还需要更多质心，
+        // 这可能在 num_clusters 非常接近 num_points 的情况下发生。
+        // 这里简单地允许非唯一（如果尝试次数用尽），或者可以抛出错误/采取其他策略。
+        // 对于大多数情况，上述循环应该能找到足够的唯一索引。
+
+        chosen_indices.push_back(rand_idx);
+        for (size_t d = 0; d < dim; ++d)
         {
             centroids[i * dim + d] = base_data[rand_idx * dim + d];
         }
@@ -67,113 +70,131 @@ void initialize_centroids_randomly
 
 
 // KMeans聚类函数的具体实现
-// const float* base_data: 指向原始 N*D float类型数据的指针
-// size_t num_points: N, 数据点的数量
-// size_t dim: D, 数据点的维度
-// size_t num_clusters_to_find: K, 期望找到的簇的数量
-// int max_iterations: KMeans算法的最大迭代次数
-// vector<float>& centroids_output: 输出参数，用于存储计算得到的扁平化质心数据
-// vector<vector<uint32_t>>& inverted_lists_output: 输出参数，用于存储每个簇包含的数据点ID
-// 返回值: 如果成功执行则为true，否则为false
-bool run_kmeans
+// 【修改函数签名，增加一个用于输出统计文件路径的参数】
+inline bool run_kmeans // 标记为inline
     (const float* base_data,
         size_t num_points,
         size_t dim,
         size_t num_clusters_to_find,
         int max_iterations,
         vector<float>& centroids_output,
-        vector<vector<uint32_t>>& inverted_lists_output)
-{   // 输出：倒排列表
+        vector<vector<uint32_t>>& inverted_lists_output,
+        const std::string& cluster_stats_filepath = "cluster_point_counts.txt") // <<< 新增参数，并提供默认文件名
+{
+    // 参数校验 (保持不变)
+    if (!base_data || num_points == 0 || dim == 0 || num_clusters_to_find == 0 || num_clusters_to_find > num_points) {
+        cerr << "KMeans: 无效的输入参数。" << endl;
+        return false;
+    }
 
-    centroids_output.resize(num_clusters_to_find * dim); // 调整输出质心容器大小
-    vector<float> previous_centroids(num_clusters_to_find * dim); // 用于检查收敛性的前一轮质心
+    centroids_output.resize(num_clusters_to_find * dim);
+    vector<float> previous_centroids(num_clusters_to_find * dim);
 
-    // 1. 初始化质心 (随机从数据点中选取K个)
     initialize_centroids_randomly(base_data, num_points, dim, num_clusters_to_find, centroids_output);
-    vector<uint32_t> assignments(num_points); // assignments[i] 存储数据点i所属的簇ID
-    // 初始化倒排列表，为每个簇创建一个空的vector用于存储点ID
+    vector<uint32_t> assignments(num_points);
     inverted_lists_output.assign(num_clusters_to_find, vector<uint32_t>());
 
-    // KMeans迭代过程
-    for (int iter = 0; iter < max_iterations; ++iter) 
-    {
-        // 存储当前质心，用于后续比较以判断是否收敛
-        previous_centroids = centroids_output;
+    bool converged = false; // 用于标记是否已收敛
 
-        // 清空上一轮的倒排列表，准备重新分配
+    // KMeans迭代过程 (保持不变)
+    for (int iter = 0; iter < max_iterations; ++iter)
+    {
+        previous_centroids = centroids_output;
         for (auto& list : inverted_lists_output)
             list.clear();
 
-        // 2. 分配步骤：将每个数据点分配给最近的质心
-        for (size_t i = 0; i < num_points; ++i) 
+        for (size_t i = 0; i < num_points; ++i)
         {
-            float min_dist = std::numeric_limits<float>::max(); // 初始化最小距离为最大浮点数
-            uint32_t best_cluster = 0;                          // 记录最近的簇ID
-            const float* current_point = base_data + i * dim;   // 当前数据点的指针
-
-            // 计算当前点与所有质心的距离
-            for (size_t j = 0; j < num_clusters_to_find; ++j) 
+            float min_dist = std::numeric_limits<float>::max();
+            uint32_t best_cluster = 0;
+            const float* current_point = base_data + i * dim;
+            for (size_t j = 0; j < num_clusters_to_find; ++j)
             {
-                const float* centroid_vec = centroids_output.data() + j * dim; // 当前质心的指针
+                const float* centroid_vec = centroids_output.data() + j * dim;
                 float dist = compute_inner_product_distance_neon_optimized(current_point, centroid_vec, dim);
-                if (dist < min_dist) 
-                { // 如果找到更近的质心
+                if (dist < min_dist)
+                {
                     min_dist = dist;
                     best_cluster = j;
                 }
             }
-            assignments[i] = best_cluster; // 记录点i所属的簇
-            inverted_lists_output[best_cluster].push_back(i); // 将点i的ID加入对应簇的倒排列表
+            assignments[i] = best_cluster;
+            inverted_lists_output[best_cluster].push_back(i);
         }
 
-        // 3. 更新步骤：重新计算每个簇的质心（簇内所有点的均值）
-        fill(centroids_output.begin(), centroids_output.end(), 0.0f); // 将质心数据清零
-        vector<uint32_t> cluster_counts(num_clusters_to_find, 0);    // 记录每个簇中点的数量
-
-        // 累加每个簇内所有点的向量值
-        for (size_t i = 0; i < num_points; ++i) 
+        fill(centroids_output.begin(), centroids_output.end(), 0.0f);
+        vector<uint32_t> cluster_counts(num_clusters_to_find, 0);
+        for (size_t i = 0; i < num_points; ++i)
         {
             uint32_t cluster_id = assignments[i];
             const float* current_point = base_data + i * dim;
-            for (size_t d = 0; d < dim; ++d) 
+            for (size_t d = 0; d < dim; ++d)
                 centroids_output[cluster_id * dim + d] += current_point[d];
-            cluster_counts[cluster_id]++; // 对应簇的点数量加1
+            cluster_counts[cluster_id]++;
         }
 
-        // 计算每个簇的新质心（均值）
-        for (size_t c = 0; c < num_clusters_to_find; ++c) 
+        for (size_t c = 0; c < num_clusters_to_find; ++c)
         {
-            if (cluster_counts[c] > 0) { // 如果簇不为空
-                for (size_t d = 0; d < dim; ++d) 
+            if (cluster_counts[c] > 0) {
+                for (size_t d = 0; d < dim; ++d)
                     centroids_output[c * dim + d] /= cluster_counts[c];
-            } 
-            else 
+            }
+            else
             {
-                // 处理空簇的情况：可以重新随机初始化，或从数据集中选取一个点
-                // 简单处理：如果一个簇变空，用数据集中的一个随机点重新初始化它
-                cerr << "警告: KMeans的簇 " << c << " 变为空。正在重新初始化。" << endl;
-                size_t rand_idx = std::rand() % num_points; // 基本的随机选择
-                for (size_t d_val = 0; d_val < dim; ++d_val) 
-                    centroids_output[c * dim + d_val] = base_data[rand_idx * dim + d_val];
+                // cerr << "警告: KMeans的簇 " << c << " 变为空。正在重新初始化。" << endl; // 调试信息
+                if (num_points > 0) { // 确保 num_points 不是0
+                    size_t rand_idx = std::rand() % num_points;
+                    for (size_t d_val = 0; d_val < dim; ++d_val)
+                        centroids_output[c * dim + d_val] = base_data[rand_idx * dim + d_val];
+                }
             }
         }
 
-        // 4. 检查是否收敛（例如，质心变化很小）
-        float centroid_shift = 0.0f; // 记录质心总体的移动量
+        float centroid_shift = 0.0f;
         for(size_t i=0; i < centroids_output.size(); ++i)
             centroid_shift += std::fabs(centroids_output[i] - previous_centroids[i]);
-        // 用于调试：cout << "KMeans迭代 " << iter << ", 质心移动量: " << centroid_shift << endl;
-        if (centroid_shift < 1e-4) 
-        {   // 设置一个收敛阈值
-            // 用于调试：cout << "KMeans在 " << iter + 1 << " 次迭代后收敛。" << endl;
-            break; // 如果变化很小，则认为已收敛，跳出迭代
+        if (centroid_shift < 1e-4)
+        {
+            converged = true; // 标记已收敛
+            // cout << "KMeans在 " << iter + 1 << " 次迭代后收敛。" << endl; // 调试信息
+            break;
         }
         if (iter == max_iterations -1)
-        { // 如果达到最大迭代次数
-             // 用于调试：cout << "KMeans达到最大迭代次数。" << endl;
+        {
+             // cout << "KMeans达到最大迭代次数。" << endl; // 调试信息
         }
     }
-    return true; // KMeans执行完毕
+
+    // --- 【新增代码块：统计每个簇的数据点数量并写入文件】 ---
+    std::ofstream stats_file(cluster_stats_filepath); // 打开（或创建）用于输出统计数据的文件
+    if (!stats_file.is_open()) {
+        std::cerr << "错误: 无法打开文件 " << cluster_stats_filepath << " 来写入簇统计数据。" << std::endl;
+        // 即使文件打不开，KMeans本身可能还是成功的，所以这里不直接返回false，但打印错误
+    } else {
+        stats_file << "ClusterID\tPointCount" << std::endl; // 写入表头
+        size_t total_assigned_points = 0;
+        // 确保 inverted_lists_output 的大小与 num_clusters_to_find 一致
+        if (inverted_lists_output.size() == num_clusters_to_find) {
+            for (size_t c = 0; c < num_clusters_to_find; ++c) {
+                size_t point_count_in_cluster = inverted_lists_output[c].size();
+                stats_file << c << "\t" << point_count_in_cluster << std::endl;
+                total_assigned_points += point_count_in_cluster;
+            }
+        } else {
+            std::cerr << "错误: KMeans内部 inverted_lists_output 大小与簇数量不符，无法统计。" << std::endl;
+        }
+        stats_file.close(); // 关闭文件
+        std::cout << "  KMeans: 簇内数据点数量统计已保存到 " << cluster_stats_filepath << std::endl; // 提示信息
+
+        // 校验总点数
+        if (inverted_lists_output.size() == num_clusters_to_find && total_assigned_points != num_points) {
+            std::cerr << "  KMeans警告: 统计的总分配点数 (" << total_assigned_points
+                      << ") 与原始点数 (" << num_points << ") 不符!" << std::endl;
+        }
+    }
+    // ----------------------------------------------------------
+
+    return true; 
 }
 
 #endif // KMEANS_H
