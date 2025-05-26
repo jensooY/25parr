@@ -13,6 +13,7 @@
 #include <pthread.h>
 #include "pq_utils.h"
 #include <omp.h>
+#include <cstddef> // For size_t
 
 using namespace std;
 class IVFIndex; // 前向声明IVFIndex类，因为IVFThreadData中会用到它
@@ -122,7 +123,11 @@ public:
         (const float* query_vector,
             size_t k,
             size_t nprobe,
-            int num_threads_to_use); 
+            int num_threads_to_use, 
+          // --- 【新增参数的声明】 ---
+          size_t current_query_idx_for_log,
+          vector<pair<size_t, uint32_t>>& selected_probed_clusters_log
+    );
 
     // 【新增】Pthread 单阶段并行IVF-PQ搜索 (簇内用ADC，可选重排)
     inline priority_queue<pair<float, uint32_t>> search_pthread_ivfpq_adc( // <<< 【修改这里】
@@ -200,9 +205,11 @@ inline bool IVFIndex::build(size_t num_clusters, int kmeans_max_iterations)
     // 1. 执行KMeans聚类，得到初始的质心和包含【原始ID】的倒排列表
     vector<vector<uint32_t>> initial_inverted_lists(num_clusters_in_index_); // 临时存储KMeans结果的倒排列表（含原始ID）
     // KMeans总是在原始数据上进行，以得到最准确的簇划分
+    std::string kmeans_stats_file = "files/ivf_cluster_stats_your_run.txt"; // 你可以自定义文件名
     bool kmeans_success = run_kmeans(base_data_original_, num_base_, dim_,
                                      num_clusters_in_index_, kmeans_max_iterations,
-                                     centroids_, initial_inverted_lists); // 输出到临时的倒排列表
+                                     centroids_, initial_inverted_lists,
+                                     kmeans_stats_file); // <<< 传递文件名
 
     if (!kmeans_success)
     {
@@ -399,13 +406,28 @@ inline priority_queue<pair<float, uint32_t>> IVFIndex::search_pthread(
     const float* query_vector,
     size_t k,
     size_t nprobe,
-    int num_threads_to_use // 使用的工作线程数量
-) 
+    int num_threads_to_use, // 使用的工作线程数量
+    size_t current_query_idx_for_log,      // 当前查询的索引 (用于日志)
+    vector<pair<size_t, uint32_t>>& selected_probed_clusters_log // 用于记录 (查询索引, 选中的簇ID) 的vector引用
+)
 {
     priority_queue<pair<float, uint32_t>> final_top_k_results; // 用于存储最终合并的结果
 
+    // 检查索引是否已构建 (与之前一致)
+    if (!index_built_ || num_clusters_in_index_ == 0)
+    {
+        return final_top_k_results;
+    }
+
     // 1. 定位候选簇 (与单线程版本一致，由主线程完成)
     size_t actual_nprobe = nprobe;
+    // nprobe参数校验 (与之前一致)
+    if (actual_nprobe == 0 || actual_nprobe > num_clusters_in_index_)
+    {
+        actual_nprobe = std::min(num_clusters_in_index_, (size_t)1);
+        if (actual_nprobe == 0 && num_clusters_in_index_ > 0) actual_nprobe = 1;
+        else if (actual_nprobe == 0 && num_clusters_in_index_ == 0) return final_top_k_results;
+    }
 
     vector<pair<float, uint32_t>> cluster_distances_to_query;
     cluster_distances_to_query.reserve(num_clusters_in_index_);
@@ -425,52 +447,68 @@ inline priority_queue<pair<float, uint32_t>> IVFIndex::search_pthread(
     else
         sort(cluster_distances_to_query.begin(), cluster_distances_to_query.end());
 
-    vector<uint32_t> probed_cluster_ids;
+    vector<uint32_t> probed_cluster_ids; // 这个局部变量存储了当前查询选中的簇ID
     probed_cluster_ids.reserve(actual_nprobe);
     for (size_t i = 0; i < actual_nprobe && i < cluster_distances_to_query.size(); ++i)
+    {
         probed_cluster_ids.push_back(cluster_distances_to_query[i].second);
+    }
+
+    // --- 【新增记录逻辑】将当前查询选中的候选簇ID记录到日志中 ---
+    for (uint32_t cluster_id_selected : probed_cluster_ids)
+    {
+        selected_probed_clusters_log.push_back({current_query_idx_for_log, cluster_id_selected});
+    }
+    // ----------------------------------------------------------------
 
     if (probed_cluster_ids.empty())
-        return final_top_k_results;
+    {
+        return final_top_k_results; // 没有簇可供搜索
+    }
 
-    // 2. 准备Pthread相关变量
+    // 2. 准备Pthread相关变量 (与之前一致)
     int actual_num_threads = std::min((int)probed_cluster_ids.size(), num_threads_to_use);
     if (actual_num_threads <= 0) actual_num_threads = 1;
 
     vector<pthread_t> threads(actual_num_threads);
-    vector<IVFThreadData> thread_data_array; 
+    vector<IVFThreadData> thread_data_array;
     thread_data_array.reserve(actual_num_threads);
 
-    // 3. 分配任务给线程
+    // 3. 分配任务给线程 (与之前一致)
     for (int i = 0; i < actual_num_threads; ++i)
         thread_data_array.emplace_back(this, query_vector, k);
 
     for (size_t i = 0; i < probed_cluster_ids.size(); ++i)
         thread_data_array[i % actual_num_threads].clusters_to_search.push_back(probed_cluster_ids[i]);
 
-    // 4. 创建并启动工作线程
+    // 4. 创建并启动工作线程 (与之前一致)
     for (int i = 0; i < actual_num_threads; ++i)
-    {  
-        if (!thread_data_array[i].clusters_to_search.empty()) 
-        { 
+    {
+        if (!thread_data_array[i].clusters_to_search.empty())
+        {
             int rc = pthread_create(&threads[i], nullptr, ivf_pthread_worker_function, &thread_data_array[i]);
-            if (rc) { /* cerr << "错误: search_pthread无法创建线程 " << i << endl; */ } 
+            if (rc) { /* cerr << "错误: search_pthread无法创建线程 " << i << endl; */ }
+        }
+        else // 【可选】标记未创建的线程，以便后续join时跳过
+        {
+            threads[i] = 0; // 或者其他无效的pthread_t值，取决于你的pthread_join检查
         }
     }
 
 
-    // 5. 等待所有工作线程执行完毕
+    // 5. 等待所有工作线程执行完毕 (与之前一致)
     for (int i = 0; i < actual_num_threads; ++i)
-    {  
-        if (!thread_data_array[i].clusters_to_search.empty()) 
+    {
+        // 【修改】只join那些被成功创建且分配了任务的线程
+        if (threads[i] != 0 && !thread_data_array[i].clusters_to_search.empty())
             pthread_join(threads[i], nullptr);
     }
 
-    // 6. 合并所有线程的局部top-k结果
+    // 6. 合并所有线程的局部top-k结果 (与之前一致)
     for (int i = 0; i < actual_num_threads; ++i)
     {
-        if (!thread_data_array[i].clusters_to_search.empty())
-         { 
+        if (!thread_data_array[i].clusters_to_search.empty()) // 只合并有任务的线程的结果
+         {
             priority_queue<pair<float, uint32_t>>& local_pq = thread_data_array[i].local_top_k_results;
             while (!local_pq.empty())
             {
