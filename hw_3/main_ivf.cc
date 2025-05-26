@@ -64,8 +64,8 @@ int main(int argc, char *argv[])
     uint8_t* global_base_pq_codes = nullptr; // 指向PQ编码后基础数据的指针
 
     // 初始化 global_pq_codebook.params (M, Ks, D, D_sub, n_train, kmeans_iters)
-    global_pq_codebook.params.M = 4;     // 示例：子空间数量
-    global_pq_codebook.params.Ks = 256;  // 示例：每个子空间的码字数量
+    global_pq_codebook.params.M = 4;    
+    global_pq_codebook.params.Ks = 256; 
     global_pq_codebook.params.D = vecdim;
     global_pq_codebook.params.D_sub = vecdim / global_pq_codebook.params.M;
     global_pq_codebook.params.n_train = base_number; // 使用全部base数据进行训练
@@ -122,10 +122,15 @@ int main(int argc, char *argv[])
 
     // --- C. 在线查询与评估阶段 ---
     bool run_single_thread_test = false;  // 设置为 true 来运行单线程测试
-    bool run_pthread_test = false;       // 设置为 true 来运行【单阶段】Pthread测试 
+    bool run_pthread_test = true;       // 设置为 true 来运行【单阶段】Pthread测试 
     bool run_pthread_two_stage_test = false; // <<< 新增：设置为 true 来运行两阶段Pthread测试
     bool run_ivfpq_pthread_with_rerank_test = false; // 新增，用于测试Pthread IVF-PQ + Rerank
-    bool run_openmp_test = true; //测试OpenMP
+    bool run_openmp_test = false; //测试OpenMP
+
+     // --- 【新增】用于收集所有查询选中的候选簇ID的全局列表 ---
+    std::vector<std::pair<size_t, uint32_t>> all_selected_probed_clusters_log;
+    all_selected_probed_clusters_log.reserve(test_number * 20); // 预估大小 (test_number * nprobe)
+
 
     if (run_single_thread_test) 
     {
@@ -193,7 +198,7 @@ int main(int argc, char *argv[])
         // --- Pthread 并行在线查询与评估阶段 ---
         vector<SearchResult> results_ivf_pthread(test_number);
         size_t nprobe_param = 20;      
-        int num_worker_threads = 1; // 可调参数: Pthread工作线程数量 (例如 1, 2, 4, 8)
+        int num_worker_threads = 3; // 可调参数: Pthread工作线程数量 (例如 1, 2, 4, 8)
 
         cout << "\n--- [执行] IVF Pthread (单阶段并行) 查询阶段 ("
              << (ivf_search_index.use_memory_reordering_ ? "使用内存重排数据" : "使用原始数据") << ") ---" << endl;
@@ -206,7 +211,12 @@ int main(int argc, char *argv[])
             auto query_start_time_pthread = chrono::high_resolution_clock::now();
             // 调用IVFIndex对象的search_pthread方法进行搜索
             priority_queue<pair<float, uint32_t>> current_results_pq_pthread =
-                ivf_search_index.search_pthread(current_query_vector, k, nprobe_param, num_worker_threads);
+            ivf_search_index.search_pthread(current_query_vector,
+                                    k,
+                                    nprobe_param,
+                                    num_worker_threads,
+                                    i, // <<< 传递当前查询的索引
+                                    all_selected_probed_clusters_log); // <<< 传递日志vector的引用
             auto query_end_time_pthread = chrono::high_resolution_clock::now();
             long long query_latency_us_pthread = chrono::duration_cast<chrono::microseconds>(query_end_time_pthread - query_start_time_pthread).count();
 
@@ -732,6 +742,26 @@ int main(int argc, char *argv[])
             cout << "  没有执行任何查询。" << endl;
         cout << "------------------------------------" << endl;
     }
+
+    if (!all_selected_probed_clusters_log.empty()) // 只有当收集到数据时才写入
+    {
+        std::string probed_clusters_log_filepath = "files/probed_clusters_log_for_pthread_single_stage.txt"; // 可以为不同测试指定不同日志文件名
+        std::ofstream probed_log_file(probed_clusters_log_filepath);
+        if (!probed_log_file.is_open()) {
+            std::cerr << "错误: 无法打开文件 " << probed_clusters_log_filepath << " 来写入探查簇日志。" << std::endl;
+        } else {
+            probed_log_file << "QueryIndex\tProbedClusterID" << std::endl; // 表头
+            for (const auto& log_entry : all_selected_probed_clusters_log) {
+                probed_log_file << log_entry.first << "\t" << log_entry.second << std::endl;
+            }
+            probed_log_file.close();
+            std::cout << "\n所有查询探查的候选簇ID已记录到: " << probed_clusters_log_filepath << std::endl;
+        }
+    } else {
+        std::cout << "\n没有收集到探查簇的日志数据。" << std::endl;
+    }
+    // ----------------------------------------------------------------
+
 
 
     // --- F. 清理动态分配的内存 ---
